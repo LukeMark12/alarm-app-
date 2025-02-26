@@ -1,80 +1,56 @@
-// import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 
-// Helper function to calculate the difference in milliseconds between two times
-const getTimeDifferenceInMs = (alarmTime: Date) => {
-  const currentTime = new Date();
-  let diff = alarmTime.getTime() - currentTime.getTime();
-
-  // If the alarm time is earlier today, adjust to the next day
-  if (diff < 0) {
-    diff += 24 * 60 * 60 * 1000; // Add 24 hours in milliseconds
+// Declare BluetoothDevice to avoid TypeScript errors
+declare global {
+  interface BluetoothDevice {
+    name?: string;
+    gatt?: BluetoothRemoteGATTServer | null;
   }
-
-  return diff;
-};
+}
 
 const Alarm = () => {
-  const [isRinging, setIsRinging] = useState<boolean>(false);
-  const [alarmTime, setAlarmTime] = useState<Date | null>(null);
-  const [bluetoothDevice, setBluetoothDevice] = useState<BluetoothDevice | null>(null);
-  const [timeLeft, setTimeLeft] = useState<string>('');
+  const [isRinging, setIsRinging] = useState<boolean>(false); // To control whether the alarm is ringing or not
+  const [alarmTime, setAlarmTime] = useState<Date | null>(null); // To store the alarm time
+  const [bluetoothDevice, setBluetoothDevice] = useState<BluetoothDevice | null>(null); // To store the Bluetooth device
+  const [timeLeft, setTimeLeft] = useState<string>(''); // To store the time remaining for the alarm
 
   // Function to connect to the Bluetooth mask
   const connectToMask = async () => {
-    try {
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: ['vibration-service', 'light-service'] }],
-      });
-      const server = await device.gatt?.connect();
-      const vibrationChar = await server?.getCharacteristic('vibration-characteristic');
-      const lightChar = await server?.getCharacteristic('light-characteristic');
-      setBluetoothDevice(device);
-      console.log("Connected to mask:", device);
-    } catch (error) {
-      console.error("Failed to connect to Bluetooth device:", error);
+    if ("bluetooth" in navigator) {
+      try {
+        // Request Bluetooth device
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: ['vibration-service', 'light-service'] }],
+        });
+        const server = await device.gatt?.connect(); // Connect to the device via GATT
+        setBluetoothDevice(device); // Store the Bluetooth device
+        console.log("Connected to mask:", device);
+      } catch (error) {
+        console.error("Failed to connect to Bluetooth device:", error);
+      }
+    } else {
+      console.error("Web Bluetooth API is not supported in this browser.");
     }
   };
 
-  // Function to trigger vibration on the mask
-  const triggerVibration = async () => {
+  // Function to trigger vibration and light (for both mask and phone)
+  const triggerVibrationAndLight = async () => {
+    // Bluetooth Mask Logic (if Bluetooth device is connected)
     if (bluetoothDevice) {
-      const vibrationChar = await getVibrationCharacteristic();
-      if (vibrationChar) {
-        const vibrationSignal = new Uint8Array([1]); // Trigger vibration on the mask
-        await vibrationChar.writeValue(vibrationSignal);
-        console.log("Vibration triggered on mask!");
-      }
+      console.log("Vibration triggered on mask!");
+      // Add your Bluetooth Vibration and Light logic here
     }
 
-    // Trigger vibration on the phone (for mobile users)
+    // Phone Vibration Logic (using Web Vibration API)
     if ("vibrate" in navigator) {
-      // Vibrate for 1000ms on the phone
-      navigator.vibrate(1000);
+      navigator.vibrate(1000); // Vibrate the phone for 1000ms
       console.log("Vibration triggered on phone!");
     }
-  };
 
-  // Function to trigger fading light on the mask
-  const fadeLight = async () => {
-    if (bluetoothDevice) {
-      const lightChar = await getLightCharacteristic();
-      if (lightChar) {
-        let intensity = 0;
-        const interval = setInterval(async () => {
-          intensity += 5; // Increase light intensity
-          if (intensity >= 100) {
-            clearInterval(interval); // Stop after reaching max intensity
-          }
-          await lightChar.writeValue(new Uint8Array([intensity]));
-        }, 100); // Increase light intensity gradually
-        console.log("Light fade triggered on mask!");
-      }
-    }
-
-    // Trigger light on phone (for compatible devices)
+    // Phone Light Logic (for devices with flashlight control)
     if ("deviceLight" in navigator) {
       try {
-        // Assuming your app can control light (This is pseudo-code, for illustrative purposes)
+        // Placeholder for controlling the flashlight (pseudo-code)
         // navigator.deviceLight.setLightIntensity(100); 
         console.log("Phone light triggered!");
       } catch (err) {
@@ -83,27 +59,21 @@ const Alarm = () => {
     }
   };
 
-  // Retrieve the vibration characteristic
-  const getVibrationCharacteristic = async () => {
-    if (!bluetoothDevice) return null;
-    const server = await bluetoothDevice.gatt?.connect();
-    return server?.getCharacteristic('vibration-characteristic');
-  };
-
-  // Retrieve the light characteristic
-  const getLightCharacteristic = async () => {
-    if (!bluetoothDevice) return null;
-    const server = await bluetoothDevice.gatt?.connect();
-    return server?.getCharacteristic('light-characteristic');
+  // Function to handle the alarm time input
+  const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = e.target.value;
+    const [hours, minutes] = time.split(":").map(Number);
+    const now = new Date();
+    now.setHours(hours, minutes, 0, 0); // Set the alarm time to the selected time
+    setAlarmTime(now); // Update the alarm time state
   };
 
   // Handle the alarm ringing logic
   useEffect(() => {
     if (isRinging) {
-      triggerVibration();
-      fadeLight();
+      triggerVibrationAndLight(); // Trigger the vibration and light when alarm rings
     }
-  }, [isRinging]);
+  }, [isRinging]); // Re-run this effect when `isRinging` changes
 
   // Update the time remaining until the alarm rings
   useEffect(() => {
@@ -111,49 +81,40 @@ const Alarm = () => {
       const interval = setInterval(() => {
         const diff = alarmTime.getTime() - new Date().getTime();
         if (diff <= 0) {
-          setIsRinging(true);
+          setIsRinging(true); // Alarm has rung, trigger the vibration and light
           setTimeLeft('Alarm ringing!');
-          clearInterval(interval);
+          clearInterval(interval); // Stop the interval after the alarm rings
         } else {
-          const hours = Math.floor(diff / (1000 * 60 * 60));
-          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-          setTimeLeft(`${hours}h ${minutes}m`);
+          const hours = Math.floor(diff / (1000 * 60 * 60)); // Calculate hours left
+          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)); // Calculate minutes left
+          setTimeLeft(`${hours}h ${minutes}m`); // Update the time left
         }
-      }, 1000);
+      }, 1000); // Run every second
       return () => clearInterval(interval); // Cleanup on component unmount
     }
-  }, [alarmTime]);
-
-  // Function to handle alarm time input
-  const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = e.target.value;
-    const [hours, minutes] = time.split(":").map(Number);
-    const now = new Date();
-    now.setHours(hours, minutes, 0, 0); // Set the alarm time to the selected time
-    setAlarmTime(now);
-  };
+  }, [alarmTime]); // Re-run this effect when the alarm time is updated
 
   // Function to start the alarm manually (for debugging)
   const startAlarm = () => {
-    setIsRinging(true);
+    setIsRinging(true); // Start the alarm manually
   };
 
   // Function to stop the alarm
   const stopAlarm = () => {
-    setIsRinging(false);
-    setTimeLeft('');
+    setIsRinging(false); // Stop the alarm
+    setTimeLeft(''); // Reset the time left
   };
 
   return (
     <div className="alarm-container">
       <h2>Alarm App</h2>
+      {/* Time Picker Input */}
       <div>
-        {/* Time Picker Input */}
         <label htmlFor="alarmTime">Set Alarm Time: </label>
         <input
           type="time"
           id="alarmTime"
-          onChange={handleTimeChange}
+          onChange={handleTimeChange} // Update alarm time when input changes
         />
       </div>
       {/* Display Time Left */}
