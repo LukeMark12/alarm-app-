@@ -1,67 +1,70 @@
 import React, { useState, useEffect } from "react";
 
+// Declare Bluetooth device type (for TypeScript compatibility)
+declare global {
+  interface BluetoothDevice {
+    name?: string;
+    gatt?: BluetoothRemoteGATTServer | null;
+  }
+}
+
 const Alarm = () => {
   const [isRinging, setIsRinging] = useState<boolean>(false);
   const [alarmTime, setAlarmTime] = useState<Date | null>(null);
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [status, setStatus] = useState<string>("Disconnected");
-  const [port, setPort] = useState<SerialPort | null>(null);
-  const [writer, setWriter] = useState<WritableStreamDefaultWriter | null>(null);
+  const [bluetoothDevice, setBluetoothDevice] = useState<BluetoothDevice | null>(null);
+  const [writer, setWriter] = useState<WritableStreamDefaultWriter | null>(null); // Bluetooth writer
 
-  // Function to connect to HC-05 via Web Serial API
-  const connectToHC05 = async () => {
+  // Function to connect to the Bluetooth mask (HC-05)
+  const connectToBluetooth = async () => {
     try {
-      if ("serial" in navigator) {
-        const serialPort = await (navigator as any).serial.requestPort();
-        await serialPort.open({ baudRate: 9600 });
-        setPort(serialPort);
-        setStatus("Connected to HC-05");
+      if ("bluetooth" in navigator) {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "HC-05" }], // Or a specific name if you know the HC-05's name
+          optionalServices: ['device_information'], // You can add more services if needed
+        });
 
-        const textWriter = serialPort.writable.getWriter();
-        setWriter(textWriter);
+        const server = await device.gatt?.connect(); // Connect to HC-05
+        const service = await server?.getPrimaryService('device_information'); // Optional service
+        const characteristic = await service?.getCharacteristic('device_name'); // Optional characteristic
+        setBluetoothDevice(device); // Set the connected device
+        setStatus("Connected to Bluetooth Mask");
 
-        console.log("Connected to HC-05!");
+        // Get the writable stream for sending data
+        const writer = device.gatt?.getWriter();
+        setWriter(writer);
       } else {
-        alert("Web Serial API is not supported in this browser.");
+        alert("Web Bluetooth API is not supported in this browser.");
       }
     } catch (error) {
-      console.error("Failed to connect:", error);
-      setStatus("Connection Failed");
+      console.error("Error connecting to Bluetooth:", error);
+      setStatus("Failed to connect to Bluetooth Mask");
     }
   };
 
-  // Function to send data to HC-05
-  const sendDataToHC05 = async (data: string) => {
+  // Function to send commands to the Bluetooth mask (e.g., "ALARM_ON")
+  const sendToMask = async (message: string) => {
     if (writer) {
       const encoder = new TextEncoder();
-      await writer.write(encoder.encode(data));
-      console.log("Sent to HC-05:", data);
+      await writer.write(encoder.encode(message));
+      console.log("Message sent to mask:", message);
     }
   };
 
-  // Trigger alarm (Phone Vibration + Send signal to HC-05)
+  // Trigger alarm and send signal to Bluetooth mask
   const triggerAlarm = async () => {
     setStatus("Alarm triggered!");
+    // Send the ALARM_ON signal to the mask via Bluetooth
+    if (bluetoothDevice) {
+      await sendToMask("ALARM_ON"); // Send ALARM_ON signal to mask
 
-    // Send a signal to HC-05 (e.g., "VIBRATE")
-    await sendDataToHC05("VIBRATE");
-
-    // Phone vibration
-    if ("vibrate" in navigator) {
-      navigator.vibrate(1000); // Vibration for 1 second
-      console.log("Phone vibrated!");
+      // Vibration on phone (optional)
+      if ("vibrate" in navigator) {
+        navigator.vibrate(1000); // Vibration for 1 second
+        console.log("Phone vibrated!");
+      }
     }
-  };
-
-  // Handle alarm time input
-  const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = e.target.value;
-    const [hours, minutes] = time.split(":").map(Number);
-    const now = new Date();
-    now.setHours(hours, minutes, 0, 0);
-    if (now < new Date()) now.setDate(now.getDate() + 1);
-    setAlarmTime(now);
-    setStatus(`Alarm set for ${now.toLocaleTimeString()}`);
   };
 
   // Countdown to alarm
@@ -83,14 +86,18 @@ const Alarm = () => {
     }
   }, [alarmTime]);
 
-  // Trigger the alarm when it rings
-  useEffect(() => {
-    if (isRinging) {
-      triggerAlarm();
-    }
-  }, [isRinging]);
+  // Handle alarm time input
+  const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = e.target.value;
+    const [hours, minutes] = time.split(":").map(Number);
+    const now = new Date();
+    now.setHours(hours, minutes, 0, 0);
+    if (now < new Date()) now.setDate(now.getDate() + 1);
+    setAlarmTime(now);
+    setStatus(`Alarm set for ${now.toLocaleTimeString()}`);
+  };
 
-  // Manual alarm controls
+  // Start and stop alarm controls
   const startAlarm = () => setIsRinging(true);
   const stopAlarm = () => {
     setIsRinging(false);
@@ -113,7 +120,7 @@ const Alarm = () => {
         <button onClick={stopAlarm}>Stop Alarm</button>
       </div>
       <div>
-        <button onClick={connectToHC05}>Connect to HC-05</button>
+        <button onClick={connectToBluetooth}>Connect to Mask</button>
       </div>
       <div>
         <p>Status: {status}</p>
