@@ -1,8 +1,4 @@
 import React, { useState, useEffect } from "react";
-import io from "socket.io-client";
-
-// Connect to Node.js server
-const socket = io("http://localhost:4000", { autoConnect: true });
 
 const Alarm = () => {
   const [isRinging, setIsRinging] = useState<boolean>(false);
@@ -43,17 +39,16 @@ const Alarm = () => {
     }
   };
 
-  // Trigger alarm via Socket.IO and HC-05
+  // Trigger alarm (Phone Vibration + Send signal to HC-05)
   const triggerAlarm = async () => {
-    socket.emit("triggerAlarm");
-    setStatus("Alarm triggered, signal sent!");
+    setStatus("Alarm triggered!");
 
-    // Send command to HC-05 (e.g., "VIBRATE")
+    // Send a signal to HC-05 (e.g., "VIBRATE")
     await sendDataToHC05("VIBRATE");
 
     // Phone vibration
     if ("vibrate" in navigator) {
-      navigator.vibrate(1000);
+      navigator.vibrate(1000); // Vibration for 1 second
       console.log("Phone vibrated!");
     }
   };
@@ -88,7 +83,7 @@ const Alarm = () => {
     }
   }, [alarmTime]);
 
-  // When alarm rings, send signal to HC-05
+  // Trigger the alarm when it rings
   useEffect(() => {
     if (isRinging) {
       triggerAlarm();
