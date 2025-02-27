@@ -81,6 +81,7 @@ const Alarm = () => {
           const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
           setTimeLeft(`${hours}h ${minutes}m`);
         }
+        
       }, 1000);
       return () => clearInterval(interval);
     }
