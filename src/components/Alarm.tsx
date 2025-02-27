@@ -1,142 +1,127 @@
 import React, { useState, useEffect } from "react";
+import io from "socket.io-client";
 
-// Declare BluetoothDevice to avoid TypeScript errors
-declare global {
-  interface BluetoothDevice {
-    name?: string;
-    gatt?: BluetoothRemoteGATTServer | null;
-  }
-}
+// Connect to Node.js server
+const socket = io("http://localhost:4000", { autoConnect: true });
 
 const Alarm = () => {
-  const [isRinging, setIsRinging] = useState<boolean>(false); // To control whether the alarm is ringing or not
-  const [alarmTime, setAlarmTime] = useState<Date | null>(null); // To store the alarm time
-  const [bluetoothDevice, setBluetoothDevice] = useState<BluetoothDevice | null>(null); // To store the Bluetooth device
-  const [timeLeft, setTimeLeft] = useState<string>(''); // To store the time remaining for the alarm
+  const [isRinging, setIsRinging] = useState<boolean>(false);
+  const [alarmTime, setAlarmTime] = useState<Date | null>(null);
+  const [timeLeft, setTimeLeft] = useState<string>("");
+  const [status, setStatus] = useState<string>("Disconnected");
+  const [port, setPort] = useState<SerialPort | null>(null);
+  const [writer, setWriter] = useState<WritableStreamDefaultWriter | null>(null);
 
-  // Function to connect to the Bluetooth mask
-  const connectToMask = async () => {
-    if ("bluetooth" in navigator) {
-      try {
-        // Request Bluetooth device
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ services: ['vibration-service', 'light-service'] }],
-        });
-        const server = await device.gatt?.connect(); // Connect to the device via GATT
-        setBluetoothDevice(device); // Store the Bluetooth device
-        console.log("Connected to mask:", device);
-      } catch (error) {
-        console.error("Failed to connect to Bluetooth device:", error);
+  // Function to connect to HC-05 via Web Serial API
+  const connectToHC05 = async () => {
+    try {
+      if ("serial" in navigator) {
+        const serialPort = await (navigator as any).serial.requestPort();
+        await serialPort.open({ baudRate: 9600 });
+        setPort(serialPort);
+        setStatus("Connected to HC-05");
+
+        const textWriter = serialPort.writable.getWriter();
+        setWriter(textWriter);
+
+        console.log("Connected to HC-05!");
+      } else {
+        alert("Web Serial API is not supported in this browser.");
       }
-    } else {
-      console.error("Web Bluetooth API is not supported in this browser.");
+    } catch (error) {
+      console.error("Failed to connect:", error);
+      setStatus("Connection Failed");
     }
   };
 
-  // Function to trigger vibration and light (for both mask and phone)
-  const triggerVibrationAndLight = async () => {
-    // Bluetooth Mask Logic (if Bluetooth device is connected)
-    if (bluetoothDevice) {
-      console.log("Vibration triggered on mask!");
-      // Add your Bluetooth Vibration and Light logic here
+  // Function to send data to HC-05
+  const sendDataToHC05 = async (data: string) => {
+    if (writer) {
+      const encoder = new TextEncoder();
+      await writer.write(encoder.encode(data));
+      console.log("Sent to HC-05:", data);
     }
+  };
 
-    // Phone Vibration Logic (using Web Vibration API)
+  // Trigger alarm via Socket.IO and HC-05
+  const triggerAlarm = async () => {
+    socket.emit("triggerAlarm");
+    setStatus("Alarm triggered, signal sent!");
+
+    // Send command to HC-05 (e.g., "VIBRATE")
+    await sendDataToHC05("VIBRATE");
+
+    // Phone vibration
     if ("vibrate" in navigator) {
-      navigator.vibrate(1000); // Vibrate the phone for 1000ms
-      console.log("Vibration triggered on phone!");
-    }
-
-    // Phone Light Logic (for devices with flashlight control)
-    if ("deviceLight" in navigator) {
-      try {
-        // Placeholder for controlling the flashlight (pseudo-code)
-        // navigator.deviceLight.setLightIntensity(100); 
-        console.log("Phone light triggered!");
-      } catch (err) {
-        console.error("Device light control not supported on this phone.");
-      }
+      navigator.vibrate(1000);
+      console.log("Phone vibrated!");
     }
   };
 
-  // Function to handle the alarm time input
+  // Handle alarm time input
   const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = e.target.value;
     const [hours, minutes] = time.split(":").map(Number);
     const now = new Date();
-    now.setHours(hours, minutes, 0, 0); // Set the alarm time to the selected time
-    setAlarmTime(now); // Update the alarm time state
+    now.setHours(hours, minutes, 0, 0);
+    if (now < new Date()) now.setDate(now.getDate() + 1);
+    setAlarmTime(now);
+    setStatus(`Alarm set for ${now.toLocaleTimeString()}`);
   };
 
-  // Handle the alarm ringing logic
-  useEffect(() => {
-    if (isRinging) {
-      triggerVibrationAndLight(); // Trigger the vibration and light when alarm rings
-    }
-  }, [isRinging]); // Re-run this effect when `isRinging` changes
-
-  // Update the time remaining until the alarm rings
+  // Countdown to alarm
   useEffect(() => {
     if (alarmTime) {
       const interval = setInterval(() => {
         const diff = alarmTime.getTime() - new Date().getTime();
         if (diff <= 0) {
-          setIsRinging(true); // Alarm has rung, trigger the vibration and light
-          setTimeLeft('Alarm ringing!');
-          clearInterval(interval); // Stop the interval after the alarm rings
+          setIsRinging(true);
+          setTimeLeft("Alarm ringing!");
+          clearInterval(interval);
         } else {
-          const hours = Math.floor(diff / (1000 * 60 * 60)); // Calculate hours left
-          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)); // Calculate minutes left
-          setTimeLeft(`${hours}h ${minutes}m`); // Update the time left
+          const hours = Math.floor(diff / (1000 * 60 * 60));
+          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+          setTimeLeft(`${hours}h ${minutes}m`);
         }
-      }, 1000); // Run every second
-      return () => clearInterval(interval); // Cleanup on component unmount
+      }, 1000);
+      return () => clearInterval(interval);
     }
-  }, [alarmTime]); // Re-run this effect when the alarm time is updated
+  }, [alarmTime]);
 
-  // Function to start the alarm manually (for debugging)
-  const startAlarm = () => {
-    setIsRinging(true); // Start the alarm manually
-  };
+  // When alarm rings, send signal to HC-05
+  useEffect(() => {
+    if (isRinging) {
+      triggerAlarm();
+    }
+  }, [isRinging]);
 
-  // Function to stop the alarm
+  // Manual alarm controls
+  const startAlarm = () => setIsRinging(true);
   const stopAlarm = () => {
-    setIsRinging(false); // Stop the alarm
-    setTimeLeft(''); // Reset the time left
+    setIsRinging(false);
+    setTimeLeft("");
+    setStatus("Alarm stopped");
   };
 
   return (
-    <div className="alarm-container">
+    <div className="alarm-container" style={{ textAlign: "center", padding: "20px" }}>
       <h2>Alarm App</h2>
-      {/* Time Picker Input */}
       <div>
         <label htmlFor="alarmTime">Set Alarm Time: </label>
-        <input
-          type="time"
-          id="alarmTime"
-          onChange={handleTimeChange} // Update alarm time when input changes
-        />
+        <input type="time" id="alarmTime" onChange={handleTimeChange} />
       </div>
-      {/* Display Time Left */}
       <div>
         <p>Time left until alarm: {timeLeft}</p>
       </div>
-      {/* Buttons to start/stop alarm */}
       <div>
         <button onClick={startAlarm}>Start Alarm (Manual)</button>
         <button onClick={stopAlarm}>Stop Alarm</button>
       </div>
-      {/* Connect to Mask Button */}
       <div>
-        <button onClick={connectToMask}>Connect to Mask</button>
+        <button onClick={connectToHC05}>Connect to HC-05</button>
       </div>
-      {/* Display connection status */}
       <div>
-        {bluetoothDevice ? (
-          <p>Connected to: {bluetoothDevice.name}</p>
-        ) : (
-          <p>Not connected to any device</p>
-        )}
+        <p>Status: {status}</p>
       </div>
     </div>
   );
