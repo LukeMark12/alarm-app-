@@ -40,3 +40,41 @@
 .read-the-docs {
   color: #888;
 }
+
+
+.alarm-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: #000;
+  color: #fff;
+  font-family: Arial, sans-serif;
+}
+
+h2 {
+  margin-bottom: 20px;
+}
+
+button {
+  padding: 10px 20px;
+  margin: 5px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+button:nth-child(2) {
+  background-color: #dc3545; /* Red for Stop */
+}
+
+button:nth-child(2):hover {
+  background-color: #c82333;
+}

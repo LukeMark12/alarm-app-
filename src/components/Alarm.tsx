@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from "react";
 
-// Declare Bluetooth device type (for TypeScript compatibility)
+// Declare Bluetooth-related types (for TypeScript compatibility)
 declare global {
   interface BluetoothDevice {
     name?: string;
-    gatt?: BluetoothRemoteGATTServer | null;
+    gatt?: BluetoothRemoteGATTServer;
+  }
+  interface BluetoothRemoteGATTServer {
+    connect(): Promise<BluetoothRemoteGATTServer>;
+    getPrimaryService(service: string): Promise<BluetoothRemoteGATTService>;
+  }
+  interface BluetoothRemoteGATTService {
+    getCharacteristic(characteristic: string): Promise<BluetoothRemoteGATTCharacteristic>;
+  }
+  interface BluetoothRemoteGATTCharacteristic {
+    writeValue(value: ArrayBuffer): Promise<void>;
   }
 }
 
@@ -14,56 +24,65 @@ const Alarm = () => {
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [status, setStatus] = useState<string>("Disconnected");
   const [bluetoothDevice, setBluetoothDevice] = useState<BluetoothDevice | null>(null);
-  const [writer, setWriter] = useState<WritableStreamDefaultWriter | null>(null); // Bluetooth writer
+  const [characteristic, setCharacteristic] = useState<BluetoothRemoteGATTCharacteristic | null>(null);
 
-  // Function to connect to the Bluetooth mask (HC-05)
+  // Connect to HC-05 Bluetooth module
   const connectToBluetooth = async () => {
     try {
       if ("bluetooth" in navigator) {
         const device = await navigator.bluetooth.requestDevice({
-          filters: [{ name: "HC-05" }], // Or a specific name if you know the HC-05's name
-          optionalServices: ['device_information'], // You can add more services if needed
+          filters: [{ name: "HC-05" }],
+          optionalServices: ["00001101-0000-1000-8000-00805f9b34fb"], // UART service UUID for HC-05
         });
 
-        const server = await device.gatt?.connect(); // Connect to HC-05
-        const service = await server?.getPrimaryService('device_information'); // Optional service
-        const characteristic = await service?.getCharacteristic('device_name'); // Optional characteristic
-        setBluetoothDevice(device); // Set the connected device
-        setStatus("Connected to Bluetooth Mask");
-
-        // Get the writable stream for sending data
-        const writer = device.gatt?.getWriter();
-        setWriter(writer);
+        const server = await device.gatt?.connect();
+        const service = await server?.getPrimaryService("00001101-0000-1000-8000-00805f9b34fb"); // Serial Port UUID
+        const char = await service?.getCharacteristic("00001101-0000-1000-8000-00805f9b34fb"); // Same UUID for characteristic
+        setBluetoothDevice(device);
+        setCharacteristic(char);
+        setStatus("Connected to HC-05");
+        console.log("Connected to HC-05");
       } else {
         alert("Web Bluetooth API is not supported in this browser.");
       }
     } catch (error) {
-      console.error("Error connecting to Bluetooth:", error);
-      setStatus("Failed to connect to Bluetooth Mask");
+      console.error("Bluetooth connection error:", error);
+      setStatus("Failed to connect to HC-05");
     }
   };
 
-  // Function to send commands to the Bluetooth mask (e.g., "ALARM_ON")
+  // Send command to HC-05
   const sendToMask = async (message: string) => {
-    if (writer) {
+    if (characteristic) {
       const encoder = new TextEncoder();
-      await writer.write(encoder.encode(message));
-      console.log("Message sent to mask:", message);
+      const data = encoder.encode(message + "\n"); // Add newline to match Arduino's readStringUntil('\n')
+      await characteristic.writeValue(data);
+      console.log("Sent to HC-05:", message);
+    } else {
+      console.log("No characteristic available to send data.");
     }
   };
 
-  // Trigger alarm and send signal to Bluetooth mask
+  // Trigger alarm and send ALARM_ON
   const triggerAlarm = async () => {
+    setIsRinging(true);
     setStatus("Alarm triggered!");
-    // Send the ALARM_ON signal to the mask via Bluetooth
-    if (bluetoothDevice) {
-      await sendToMask("ALARM_ON"); // Send ALARM_ON signal to mask
-
-      // Vibration on phone (optional)
+    if (characteristic) {
+      await sendToMask("ALARM_ON");
       if ("vibrate" in navigator) {
-        navigator.vibrate(1000); // Vibration for 1 second
+        navigator.vibrate(1000); // Vibrate phone for 1 second
         console.log("Phone vibrated!");
       }
+    }
+  };
+
+  // Stop alarm and send ALARM_OFF
+  const stopAlarm = async () => {
+    setIsRinging(false);
+    setTimeLeft("");
+    setStatus("Alarm stopped");
+    if (characteristic) {
+      await sendToMask("ALARM_OFF");
     }
   };
 
@@ -73,15 +92,13 @@ const Alarm = () => {
       const interval = setInterval(() => {
         const diff = alarmTime.getTime() - new Date().getTime();
         if (diff <= 0) {
-          setIsRinging(true);
-          setTimeLeft("Alarm ringing!");
+          triggerAlarm(); // Auto-trigger alarm when time is up
           clearInterval(interval);
         } else {
           const hours = Math.floor(diff / (1000 * 60 * 60));
           const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
           setTimeLeft(`${hours}h ${minutes}m`);
         }
-        
       }, 1000);
       return () => clearInterval(interval);
     }
@@ -98,14 +115,6 @@ const Alarm = () => {
     setStatus(`Alarm set for ${now.toLocaleTimeString()}`);
   };
 
-  // Start and stop alarm controls
-  const startAlarm = () => setIsRinging(true);
-  const stopAlarm = () => {
-    setIsRinging(false);
-    setTimeLeft("");
-    setStatus("Alarm stopped");
-  };
-
   return (
     <div className="alarm-container" style={{ textAlign: "center", padding: "20px" }}>
       <h2>Alarm App</h2>
@@ -117,11 +126,11 @@ const Alarm = () => {
         <p>Time left until alarm: {timeLeft}</p>
       </div>
       <div>
-        <button onClick={startAlarm}>Start Alarm (Manual)</button>
+        <button onClick={triggerAlarm}>Start Alarm (Manual)</button>
         <button onClick={stopAlarm}>Stop Alarm</button>
       </div>
       <div>
-        <button onClick={connectToBluetooth}>Connect to Mask</button>
+        <button onClick={connectToBluetooth}>Connect to HC-05</button>
       </div>
       <div>
         <p>Status: {status}</p>
